@@ -6,16 +6,27 @@ use std::thread::sleep;
 use std::time::Duration;
 
 fn main() -> std::io::Result<()> {
-    let mut keys = AttributeSet::<Key>::new();
-    keys.insert(Key::BTN_DPAD_UP);
-    keys.insert(Key::KEY_A);
-    keys.insert(Key::KEY_B);
-    keys.insert(Key::KEY_LEFTCTRL);
-    keys.insert(Key::KEY_LEFTSHIFT);
+    let mut keys = AttributeSet::<evdev::Key>::new();
+    for i in evdev::Key::KEY_ESC.code()..(evdev::Key::BTN_TRIGGER_HAPPY40.code() + 1) {
+        let key = evdev::Key::new(i);
+        if !format!("{:?}", &key).contains("unknown key") {
+            println!("add {}, {:?}", i, evdev::Key::new(i));
+            keys.insert(evdev::Key::new(i));
+        }
+    }
+
+    let mut leds = AttributeSet::<evdev::LedType>::new();
+    leds.insert(evdev::LedType::LED_CAPSL);
+    leds.insert(evdev::LedType::LED_SCROLLL);
+
+    let mut miscs = AttributeSet::<evdev::MiscType>::new();
+    miscs.insert(evdev::MiscType::MSC_SCAN);
 
     let mut device = VirtualDeviceBuilder::new()?
         .name("Fake Keyboard")
         .with_keys(&keys)?
+        .with_leds(&leds)?
+        .with_miscs(&miscs)?
         .build()
         .unwrap();
 
@@ -25,30 +36,26 @@ fn main() -> std::io::Result<()> {
     }
 
     let type_ = EventType::KEY;
-    // Note this will ACTUALLY PRESS the button on your computer.
-    // Hopefully you don't have BTN_DPAD_UP bound to anything important.
-    let code = Key::KEY_A.code();
+    let code_a = Key::KEY_A.code();
 
     println!("Waiting for Ctrl-C...");
+
     loop {
-        let down_event = InputEvent::new(type_, code, 1);
-        device.emit(&[down_event]).unwrap();
-        println!("Pressed.");
-        sleep(Duration::from_secs(2));
+        let mut chosen = String::new();
+        std::io::stdin().read_line(&mut chosen).unwrap();
 
-        let up_event = InputEvent::new(type_, code, 0);
-        device.emit(&[up_event]).unwrap();
-        println!("Released.");
-        sleep(Duration::from_secs(1));
-
-        let leftctrl_down = InputEvent::new(type_, Key::KEY_LEFTCTRL.code(), 1);
-        device.emit(&[leftctrl_down]).unwrap();
+        let capslock_down = InputEvent::new(type_, Key::KEY_CAPSLOCK.code(), 1);
+        let capslock_up = InputEvent::new(type_, Key::KEY_CAPSLOCK.code(), 0);
+        device.emit(&[capslock_down, capslock_up]).unwrap();
+        sleep(Duration::from_millis(300));
         println!("leftctrl_down, get_key_state: {:?}", device.get_key_state());
-        sleep(Duration::from_secs(1));
+        println!("leftctrl_down, get_led_state: {:?}", device.get_led_state());
 
-        let leftctrl_up = InputEvent::new(type_, Key::KEY_LEFTCTRL.code(), 0);
-        device.emit(&[leftctrl_up]).unwrap();
-        println!("leftctrl_up, get_key_state: {:?}", device.get_key_state());
-        sleep(Duration::from_secs(1));
+        let key_a_down = InputEvent::new(type_, code_a, 1);
+        let key_a_up = InputEvent::new(type_, code_a, 0);
+        device.emit(&[key_a_down, key_a_up]).unwrap();
+        sleep(Duration::from_millis(300));
+        println!("key_a_down, get_key_state: {:?}", device.get_key_state());
+        println!("key_a_down, get_led_state: {:?}", device.get_led_state());
     }
 }

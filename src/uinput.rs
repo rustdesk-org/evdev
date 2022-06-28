@@ -9,7 +9,7 @@ use crate::inputid::{BusType, InputId};
 use crate::raw_stream::vec_spare_capacity_mut;
 use crate::{
     sys, AttributeSet, AttributeSetRef, Error, FFEffectType, InputEvent, InputEventKind, Key,
-    MiscType, PropType, RelativeAxisType, SwitchType, UinputAbsSetup,
+    LedType, MiscType, PropType, RelativeAxisType, SwitchType, UinputAbsSetup,
 };
 use libc::O_NONBLOCK;
 use std::fs::{File, OpenOptions};
@@ -70,6 +70,46 @@ impl<'a> VirtualDeviceBuilder<'a> {
         for bit in keys.iter() {
             unsafe {
                 sys::ui_set_keybit(
+                    self.file.as_raw_fd(),
+                    bit.0 as nix::sys::ioctl::ioctl_param_type,
+                )?;
+            }
+        }
+
+        Ok(self)
+    }
+
+    pub fn with_miscs(self, keys: &AttributeSetRef<MiscType>) -> io::Result<Self> {
+        unsafe {
+            sys::ui_set_evbit(
+                self.file.as_raw_fd(),
+                crate::EventType::MISC.0 as nix::sys::ioctl::ioctl_param_type,
+            )?;
+        }
+
+        for bit in keys.iter() {
+            unsafe {
+                sys::ui_set_mscbit(
+                    self.file.as_raw_fd(),
+                    bit.0 as nix::sys::ioctl::ioctl_param_type,
+                )?;
+            }
+        }
+
+        Ok(self)
+    }
+
+    pub fn with_leds(self, keys: &AttributeSetRef<LedType>) -> io::Result<Self> {
+        unsafe {
+            sys::ui_set_evbit(
+                self.file.as_raw_fd(),
+                crate::EventType::LED.0 as nix::sys::ioctl::ioctl_param_type,
+            )?;
+        }
+
+        for bit in keys.iter() {
+            unsafe {
+                sys::ui_set_ledbit(
                     self.file.as_raw_fd(),
                     bit.0 as nix::sys::ioctl::ioctl_param_type,
                 )?;
@@ -364,6 +404,43 @@ impl VirtualDevice {
     #[inline]
     pub fn update_key_state(&self, key_vals: &mut AttributeSet<Key>) -> io::Result<()> {
         unsafe { sys::eviocgkey(self.file_event.as_raw_fd(), key_vals.as_mut_raw_slice())? };
+        Ok(())
+    }
+
+    /// Retrieve the current switch state directly via kernel syscall.
+    #[inline]
+    pub fn get_switch_state(&self) -> io::Result<AttributeSet<SwitchType>> {
+        let mut switch_vals = AttributeSet::new();
+        self.update_switch_state(&mut switch_vals)?;
+        Ok(switch_vals)
+    }
+
+    /// Retrieve the current LED state directly via kernel syscall.
+    #[inline]
+    pub fn get_led_state(&self) -> io::Result<AttributeSet<LedType>> {
+        let mut led_vals = AttributeSet::new();
+        self.update_led_state(&mut led_vals)?;
+        Ok(led_vals)
+    }
+
+    /// Fetch the current kernel switch state directly into the provided buffer.
+    /// If you don't already have a buffer, you probably want
+    /// [`get_switch_state`](Self::get_switch_state) instead.
+    #[inline]
+    pub fn update_switch_state(
+        &self,
+        switch_vals: &mut AttributeSet<SwitchType>,
+    ) -> io::Result<()> {
+        unsafe { sys::eviocgsw(self.file_event.as_raw_fd(), switch_vals.as_mut_raw_slice())? };
+        Ok(())
+    }
+
+    /// Fetch the current kernel LED state directly into the provided buffer.
+    /// If you don't already have a buffer, you probably want
+    /// [`get_led_state`](Self::get_led_state) instead.
+    #[inline]
+    pub fn update_led_state(&self, led_vals: &mut AttributeSet<LedType>) -> io::Result<()> {
+        unsafe { sys::eviocgled(self.file_event.as_raw_fd(), led_vals.as_mut_raw_slice())? };
         Ok(())
     }
 
