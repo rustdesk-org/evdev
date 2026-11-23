@@ -12,6 +12,7 @@ use libc::O_NONBLOCK;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::{fs::OpenOptionsExt, io::AsRawFd};
+use std::path::Path;
 
 const UINPUT_PATH: &str = "/dev/uinput";
 
@@ -221,11 +222,7 @@ impl VirtualDevice {
                                     if fname.as_bytes().starts_with(b"event") {
                                         let event_file =
                                             format!("/dev/input/{}", fname.to_string_lossy());
-                                        return OpenOptions::new()
-                                            .read(true)
-                                            // .write(true)
-                                            .custom_flags(O_NONBLOCK)
-                                            .open(event_file);
+                                        return open_event_node(Path::new(&event_file));
                                     }
                                 }
                             }
@@ -320,5 +317,65 @@ impl VirtualDevice {
     pub fn update_led_state(&self, led_vals: &mut AttributeSet<LedType>) -> io::Result<()> {
         unsafe { sys::eviocgled(self.file_event.as_raw_fd(), led_vals.as_mut_raw_slice())? };
         Ok(())
+    }
+}
+
+fn open_event_node(path: &Path) -> io::Result<File> {
+    use std::time::{Duration, Instant};
+
+    // udev applies permissions asynchronously after UI_DEV_CREATE. Keep the
+    // uinput fd alive while waiting, but still report permanent permission errors.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let result = OpenOptions::new()
+            .read(true)
+            .custom_flags(O_NONBLOCK)
+            .open(path);
+        match result {
+            Err(ref error)
+                if error.kind() == io::ErrorKind::PermissionDenied && Instant::now() < deadline =>
+            {
+                std::thread::sleep(
+                    Duration::from_millis(10)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                );
+            }
+            _ => return result,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{os::unix::fs::PermissionsExt, thread, time::Duration};
+
+    #[test]
+    fn event_node_opens_after_permissions_are_applied() {
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("requires an unprivileged user to exercise EACCES");
+            return;
+        }
+        let path = std::env::temp_dir().join(format!("evdev-permissions-{}", std::process::id()));
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        file.set_permissions(std::fs::Permissions::from_mode(0))
+            .unwrap();
+        assert_eq!(
+            File::open(&path).unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        let grant = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(700));
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                .unwrap();
+        });
+        let result = open_event_node(&path);
+        grant.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(result.is_ok(), "{result:?}");
     }
 }
